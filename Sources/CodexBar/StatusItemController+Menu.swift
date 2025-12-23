@@ -487,23 +487,27 @@ extension StatusItemController {
         }
 
         var body: some View {
-            self.content
-                .environment(\.menuItemHighlighted, self.highlightState.isHighlighted)
-                .foregroundStyle(MenuHighlightStyle.primary(self.highlightState.isHighlighted))
-                .background(alignment: .topLeading) {
-                    if self.highlightState.isHighlighted {
-                        self.highlightBackground
-                    }
+            ZStack(alignment: .topLeading) {
+                if self.highlightState.isHighlighted {
+                    self.highlightBackground
                 }
-                .overlay(alignment: .topTrailing) {
-                    if self.showsSubmenuIndicator {
-                        Image(systemName: "chevron.right")
-                            .font(.caption2.weight(.semibold))
-                            .foregroundStyle(MenuHighlightStyle.secondary(self.highlightState.isHighlighted))
-                            .padding(.top, 8)
-                            .padding(.trailing, 10)
-                    }
+
+                // Reserve trailing space for the submenu chevron so text wrapping (and fitting height)
+                // matches what AppKit actually renders, without affecting highlight geometry.
+                self.content
+                    .padding(.trailing, self.showsSubmenuIndicator ? 18 : 0)
+            }
+            .environment(\.menuItemHighlighted, self.highlightState.isHighlighted)
+            .foregroundStyle(MenuHighlightStyle.primary(self.highlightState.isHighlighted))
+            .overlay(alignment: .topTrailing) {
+                if self.showsSubmenuIndicator {
+                    Image(systemName: "chevron.right")
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(MenuHighlightStyle.secondary(self.highlightState.isHighlighted))
+                        .padding(.top, 8)
+                        .padding(.trailing, 10)
                 }
+            }
         }
 
         @ViewBuilder
@@ -630,56 +634,12 @@ extension StatusItemController {
     }
 
     private func menuCardModel(for provider: UsageProvider?) -> UsageMenuCardView.Model? {
-        let target = provider ?? self.store.enabledProviders().first ?? .codex
-        let metadata = self.store.metadata(for: target)
-
-        let snapshot = self.store.snapshot(for: target)
-        let credits: CreditsSnapshot?
-        let creditsError: String?
-        let dashboard: OpenAIDashboardSnapshot?
-        let dashboardError: String?
-        let tokenSnapshot: CCUsageTokenSnapshot?
-        let tokenError: String?
-        if target == .codex {
-            credits = self.store.credits
-            creditsError = self.store.lastCreditsError
-            dashboard = self.store.openAIDashboardRequiresLogin ? nil : self.store.openAIDashboard
-            dashboardError = self.store.lastOpenAIDashboardError
-            tokenSnapshot = self.store.tokenSnapshot(for: target)
-            tokenError = self.store.tokenError(for: target)
-        } else if target == .claude {
-            credits = nil
-            creditsError = nil
-            dashboard = nil
-            dashboardError = nil
-            tokenSnapshot = self.store.tokenSnapshot(for: target)
-            tokenError = self.store.tokenError(for: target)
-        } else {
-            credits = nil
-            creditsError = nil
-            dashboard = nil
-            dashboardError = nil
-            tokenSnapshot = nil
-            tokenError = nil
-        }
-
-        let input = UsageMenuCardView.Model.Input(
-            provider: target,
-            metadata: metadata,
-            snapshot: snapshot,
-            credits: credits,
-            creditsError: creditsError,
-            dashboard: dashboard,
-            dashboardError: dashboardError,
-            tokenSnapshot: tokenSnapshot,
-            tokenError: tokenError,
+        UsageMenuCardView.Model.make(
+            provider: provider,
+            store: self.store,
+            settings: self.settings,
             account: self.account,
-            isRefreshing: self.store.isRefreshing,
-            lastError: self.store.error(for: target),
-            usageBarsShowUsed: self.settings.usageBarsShowUsed,
-            tokenCostUsageEnabled: self.settings.isCCUsageCostUsageEffectivelyEnabled(for: target),
             now: Date())
-        return UsageMenuCardView.Model.make(input)
     }
 
     @objc private func menuCardNoOp(_ sender: NSMenuItem) {

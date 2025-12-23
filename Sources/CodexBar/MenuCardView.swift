@@ -1,3 +1,4 @@
+import AppKit
 import CodexBarCore
 import SwiftUI
 
@@ -47,6 +48,7 @@ struct UsageMenuCardView: View {
             let monthLine: String
             let hintLine: String?
             let errorLine: String?
+            let errorCopyText: String?
         }
 
         struct ProviderCostSection: Sendable {
@@ -59,11 +61,14 @@ struct UsageMenuCardView: View {
         let email: String
         let subtitleText: String
         let subtitleStyle: SubtitleStyle
+        let subtitleCopyText: String?
         let planText: String?
         let metrics: [Metric]
         let creditsText: String?
         let creditsRemaining: Double?
+        let creditsCopyText: String?
         let creditsHintText: String?
+        let creditsHintCopyText: String?
         let providerCost: ProviderCostSection?
         let tokenUsage: TokenUsageSection?
         let placeholder: String?
@@ -136,7 +141,9 @@ struct UsageMenuCardView: View {
                         CreditsBarContent(
                             creditsText: credits,
                             creditsRemaining: self.model.creditsRemaining,
+                            creditsCopyText: self.model.creditsCopyText,
                             hintText: self.model.creditsHintText,
+                            hintCopyText: self.model.creditsHintCopyText,
                             progressColor: self.model.progressColor)
                     }
                     if hasCredits, hasCost {
@@ -163,15 +170,20 @@ struct UsageMenuCardView: View {
                                 Text(hint)
                                     .font(.footnote)
                                     .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                                    .lineLimit(2)
+                                    .lineLimit(4)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             if let error = tokenUsage.errorLine, !error.isEmpty {
                                 Text(error)
                                     .font(.footnote)
                                     .foregroundStyle(MenuHighlightStyle.error(self.isHighlighted))
-                                    .lineLimit(2)
+                                    .lineLimit(4)
                                     .fixedSize(horizontal: false, vertical: true)
+                                    .onTapGesture {
+                                        if let copyText = tokenUsage.errorCopyText, !copyText.isEmpty {
+                                            copyToPasteboard(copyText)
+                                        }
+                                    }
                             }
                         }
                     }
@@ -210,9 +222,14 @@ private struct UsageMenuCardHeaderView: View {
                 Text(self.model.subtitleText)
                     .font(.footnote)
                     .foregroundStyle(self.subtitleColor)
-                    .lineLimit(1)
+                    .lineLimit(self.model.subtitleStyle == .error ? 4 : 1)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
+                    .onTapGesture {
+                        if let copyText = self.model.subtitleCopyText, !copyText.isEmpty {
+                            copyToPasteboard(copyText)
+                        }
+                    }
                 Spacer()
                 if let plan = self.model.planText {
                     Text(plan)
@@ -355,7 +372,9 @@ struct UsageMenuCardCreditsSectionView: View {
                 CreditsBarContent(
                     creditsText: credits,
                     creditsRemaining: self.model.creditsRemaining,
+                    creditsCopyText: self.model.creditsCopyText,
                     hintText: self.model.creditsHintText,
+                    hintCopyText: self.model.creditsHintCopyText,
                     progressColor: self.model.progressColor)
                 if self.showBottomDivider {
                     Divider()
@@ -374,7 +393,9 @@ private struct CreditsBarContent: View {
 
     let creditsText: String
     let creditsRemaining: Double?
+    let creditsCopyText: String?
     let hintText: String?
+    let hintCopyText: String?
     let progressColor: Color
     @Environment(\.menuItemHighlighted) private var isHighlighted
 
@@ -410,13 +431,23 @@ private struct CreditsBarContent: View {
             } else {
                 Text(self.creditsText)
                     .font(.caption)
+                    .onTapGesture {
+                        if let copyText = self.creditsCopyText, !copyText.isEmpty {
+                            copyToPasteboard(copyText)
+                        }
+                    }
             }
             if let hintText, !hintText.isEmpty {
                 Text(hintText)
                     .font(.footnote)
                     .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                    .lineLimit(2)
+                    .lineLimit(4)
                     .fixedSize(horizontal: false, vertical: true)
+                    .onTapGesture {
+                        if let copyText = self.hintCopyText, !copyText.isEmpty {
+                            copyToPasteboard(copyText)
+                        }
+                    }
             }
         }
     }
@@ -446,15 +477,20 @@ struct UsageMenuCardCostSectionView: View {
                                 Text(hint)
                                     .font(.footnote)
                                     .foregroundStyle(MenuHighlightStyle.secondary(self.isHighlighted))
-                                    .lineLimit(2)
+                                    .lineLimit(4)
                                     .fixedSize(horizontal: false, vertical: true)
                             }
                             if let error = tokenUsage.errorLine, !error.isEmpty {
                                 Text(error)
                                     .font(.footnote)
                                     .foregroundStyle(MenuHighlightStyle.error(self.isHighlighted))
-                                    .lineLimit(2)
+                                    .lineLimit(4)
                                     .fixedSize(horizontal: false, vertical: true)
+                                    .onTapGesture {
+                                        if let copyText = tokenUsage.errorCopyText, !copyText.isEmpty {
+                                            copyToPasteboard(copyText)
+                                        }
+                                    }
                             }
                         }
                     }
@@ -491,6 +527,66 @@ struct UsageMenuCardExtraUsageSectionView: View {
 // MARK: - Model factory
 
 extension UsageMenuCardView.Model {
+    @MainActor
+    static func make(
+        provider: UsageProvider?,
+        store: UsageStore,
+        settings: SettingsStore,
+        account: AccountInfo,
+        now: Date = Date()) -> UsageMenuCardView.Model
+    {
+        let target = provider ?? store.enabledProviders().first ?? .codex
+        let metadata = store.metadata(for: target)
+
+        let snapshot = store.snapshot(for: target)
+        let credits: CreditsSnapshot?
+        let creditsError: String?
+        let dashboard: OpenAIDashboardSnapshot?
+        let dashboardError: String?
+        let tokenSnapshot: CCUsageTokenSnapshot?
+        let tokenError: String?
+        if target == .codex {
+            credits = store.credits
+            creditsError = store.lastCreditsError
+            dashboard = store.openAIDashboardRequiresLogin ? nil : store.openAIDashboard
+            dashboardError = store.lastOpenAIDashboardError
+            tokenSnapshot = store.tokenSnapshot(for: target)
+            tokenError = store.tokenError(for: target)
+        } else if target == .claude {
+            credits = nil
+            creditsError = nil
+            dashboard = nil
+            dashboardError = nil
+            tokenSnapshot = store.tokenSnapshot(for: target)
+            tokenError = store.tokenError(for: target)
+        } else {
+            credits = nil
+            creditsError = nil
+            dashboard = nil
+            dashboardError = nil
+            tokenSnapshot = nil
+            tokenError = nil
+        }
+
+        let input = UsageMenuCardView.Model.Input(
+            provider: target,
+            metadata: metadata,
+            snapshot: snapshot,
+            credits: credits,
+            creditsError: creditsError,
+            dashboard: dashboard,
+            dashboardError: dashboardError,
+            tokenSnapshot: tokenSnapshot,
+            tokenError: tokenError,
+            account: account,
+            isRefreshing: store.isRefreshing,
+            lastError: store.error(for: target),
+            usageBarsShowUsed: settings.usageBarsShowUsed,
+            tokenCostUsageEnabled: settings.isCCUsageCostUsageEffectivelyEnabled(for: target),
+            now: now)
+        return UsageMenuCardView.Model.make(input)
+    }
+
     struct Input {
         let provider: UsageProvider
         let metadata: ProviderMetadata
@@ -535,11 +631,14 @@ extension UsageMenuCardView.Model {
             email: email,
             subtitleText: subtitle.text,
             subtitleStyle: subtitle.style,
+            subtitleCopyText: subtitle.copyText,
             planText: planText,
             metrics: metrics,
-            creditsText: creditsText,
+            creditsText: creditsText.text,
             creditsRemaining: input.credits?.remaining,
-            creditsHintText: creditsHintText,
+            creditsCopyText: creditsText.copyText,
+            creditsHintText: creditsHintText.text,
+            creditsHintCopyText: creditsHintText.copyText,
             providerCost: providerCost,
             tokenUsage: tokenUsage,
             placeholder: placeholder,
@@ -580,21 +679,21 @@ extension UsageMenuCardView.Model {
     private static func subtitle(
         snapshot: UsageSnapshot?,
         isRefreshing: Bool,
-        lastError: String?) -> (text: String, style: SubtitleStyle)
+        lastError: String?) -> (text: String, style: SubtitleStyle, copyText: String?)
     {
         if let lastError, !lastError.isEmpty {
-            return (UsageFormatter.truncatedSingleLine(lastError, max: 80), .error)
+            return (UsageFormatter.truncatedSingleLine(lastError, max: 160), .error, lastError)
         }
 
         if isRefreshing, snapshot == nil {
-            return ("Refreshing...", .loading)
+            return ("Refreshing...", .loading, nil)
         }
 
         if let updated = snapshot?.updatedAt {
-            return (UsageFormatter.updatedString(from: updated), .info)
+            return (UsageFormatter.updatedString(from: updated), .info, nil)
         }
 
-        return ("Not fetched yet", .info)
+        return ("Not fetched yet", .info, nil)
     }
 
     private static func metrics(input: Input) -> [Metric] {
@@ -645,22 +744,25 @@ extension UsageMenuCardView.Model {
     private static func creditsLine(
         metadata: ProviderMetadata,
         credits: CreditsSnapshot?,
-        error: String?) -> String?
+        error: String?) -> (text: String?, copyText: String?)
     {
-        guard metadata.supportsCredits else { return nil }
+        guard metadata.supportsCredits else { return (nil, nil) }
         if let credits {
-            return UsageFormatter.creditsString(from: credits.remaining)
+            return (UsageFormatter.creditsString(from: credits.remaining), nil)
         }
         if let error, !error.isEmpty {
-            return UsageFormatter.truncatedSingleLine(error, max: 80)
+            return (UsageFormatter.truncatedSingleLine(error, max: 80), error)
         }
-        return metadata.creditsHint
+        return (metadata.creditsHint, nil)
     }
 
-    private static func dashboardHint(provider: UsageProvider, error: String?) -> String? {
-        guard provider == .codex else { return nil }
-        guard let error, !error.isEmpty else { return nil }
-        return UsageFormatter.truncatedSingleLine(error, max: 100)
+    private static func dashboardHint(
+        provider: UsageProvider,
+        error: String?) -> (text: String?, copyText: String?)
+    {
+        guard provider == .codex else { return (nil, nil) }
+        guard let error, !error.isEmpty else { return (nil, nil) }
+        return (UsageFormatter.truncatedSingleLine(error, max: 100), error)
     }
 
     private static func tokenUsageSection(
@@ -697,7 +799,8 @@ extension UsageMenuCardView.Model {
             sessionLine: sessionLine,
             monthLine: monthLine,
             hintLine: nil,
-            errorLine: err)
+            errorLine: err,
+            errorCopyText: error)
     }
 
     private static func providerCostSection(
@@ -746,4 +849,10 @@ extension UsageMenuCardView.Model {
         }
         return nil
     }
+}
+
+private func copyToPasteboard(_ text: String) {
+    let pb = NSPasteboard.general
+    pb.clearContents()
+    pb.setString(text, forType: .string)
 }

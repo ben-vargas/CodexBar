@@ -18,22 +18,30 @@ struct MenuContent: View {
             settings: self.settings,
             account: self.account,
             updateReady: self.updater.updateStatus.isUpdateReady)
+        let model = UsageMenuCardView.Model.make(
+            provider: self.provider,
+            store: self.store,
+            settings: self.settings,
+            account: self.account)
+        let actionableSections = Array(descriptor.sections.suffix(2))
 
         VStack(alignment: .leading, spacing: 8) {
-            ForEach(Array(descriptor.sections.enumerated()), id: \.offset) { index, section in
+            UsageMenuCardView(model: model)
+            Divider()
+            ForEach(Array(actionableSections.enumerated()), id: \.offset) { index, section in
                 VStack(alignment: .leading, spacing: 4) {
                     ForEach(Array(section.entries.enumerated()), id: \.offset) { _, entry in
                         self.row(for: entry)
                     }
                 }
-                if index < descriptor.sections.count - 1 {
+                if index < actionableSections.count - 1 {
                     Divider()
                 }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
-        .frame(minWidth: 260, alignment: .leading)
+        .frame(minWidth: 310, alignment: .leading)
     }
 
     @ViewBuilder
